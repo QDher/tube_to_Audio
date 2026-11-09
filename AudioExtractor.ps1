@@ -5,9 +5,17 @@
 .DESCRIPTION
   A friendly window around yt-dlp (downloading) and ffmpeg (converting).
   Paste one or more links, pick a format, press "Extract audio".
+  With "Queue YouTube links I copy" on, copying a YouTube link anywhere (Ctrl+C) adds it
+  to the download queue with the format, quality and clip times selected at that moment.
 
   Start it with "Audio Extractor.cmd", or:
     powershell -NoProfile -ExecutionPolicy Bypass -File AudioExtractor.ps1 [-Theme light|dark]
+
+.NOTES
+  Credits - this app is only a front end; the work is done by:
+    yt-dlp  https://github.com/yt-dlp/yt-dlp  (Unlicense; a fork of youtube-dl, https://github.com/ytdl-org/youtube-dl)
+    FFmpeg  https://ffmpeg.org                (LGPL/GPL)
+    Deno    https://deno.com                  (MIT; JavaScript runtime yt-dlp uses for YouTube)
 #>
 [CmdletBinding()]
 param(
@@ -61,6 +69,7 @@ $Settings = @{
     Quality = '0'
     OutDir  = $DefaultOutDir
     Embed   = $true
+    WatchClipboard = $true
 }
 if (Test-Path -LiteralPath $SettingsPath) {
     try {
@@ -353,7 +362,7 @@ $Xaml = @'
         </Border>
         <StackPanel Margin="13,0,0,0" VerticalAlignment="Center">
           <TextBlock Text="Audio Extractor" FontSize="19" FontWeight="SemiBold"/>
-          <TextBlock Text="Paste YouTube links, get audio files." Style="{StaticResource Hint}" Margin="0,1,0,0"/>
+          <TextBlock Text="Copy or paste YouTube links, get audio files." Style="{StaticResource Hint}" Margin="0,1,0,0"/>
         </StackPanel>
       </DockPanel>
 
@@ -414,6 +423,11 @@ $Xaml = @'
             <TextBox x:Name="ClipEnd" Width="64" ToolTip="End time, e.g. 2:45 (empty = to the end)"/>
             <TextBlock Text="e.g. 0:45 to 2:10  ·  blank = whole video" Style="{StaticResource Hint}" Margin="12,0,0,0"/>
           </StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+            <CheckBox x:Name="WatchChk" Content="Queue YouTube links I copy (Ctrl+C)"
+                      ToolTip="While this window is open, any YouTube link you copy in another app is added to the queue with the format, quality and clip times selected at that moment."/>
+            <TextBlock Text="uses the settings above" Style="{StaticResource Hint}" Margin="10,0,0,0"/>
+          </StackPanel>
         </StackPanel>
       </Border>
 
@@ -421,7 +435,8 @@ $Xaml = @'
       <Grid Margin="0,16,0,0">
         <Button x:Name="OpenBtn" Content="Open folder" Style="{StaticResource Btn}" HorizontalAlignment="Left"/>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-          <Button x:Name="CancelBtn" Content="Cancel" Style="{StaticResource Btn}" Margin="0,0,8,0" Visibility="Collapsed"/>
+          <Button x:Name="CancelBtn" Content="Cancel" Style="{StaticResource Btn}" Margin="0,0,8,0" Visibility="Collapsed"
+                  ToolTip="Stops the current download and empties the queue. Unfinished links go back into the box."/>
           <Button x:Name="GoBtn" Content="Extract audio" Style="{StaticResource PrimaryBtn}" ToolTip="Ctrl+Enter"/>
         </StackPanel>
       </Grid>
@@ -434,8 +449,17 @@ $Xaml = @'
             <TextBlock x:Name="NowTitle" Text="Ready" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
           </DockPanel>
           <ProgressBar x:Name="Bar" Margin="0,10,0,9" Minimum="0" Maximum="100" Value="0"/>
-          <TextBlock x:Name="Status" Style="{StaticResource Hint}" TextTrimming="CharacterEllipsis"
-                     Text="Tip: copy a YouTube link, then switch to this window - it gets pasted for you."/>
+          <TextBlock x:Name="Status" Style="{StaticResource Hint}" TextTrimming="CharacterEllipsis"/>
+          <StackPanel x:Name="QueuePanel" Margin="0,12,0,0" Visibility="Collapsed">
+            <TextBlock x:Name="QueueCaption" Text="UP NEXT" Style="{StaticResource Caption}" Margin="0,0,0,4"/>
+            <ItemsControl x:Name="QueueList">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding}" Style="{StaticResource Hint}" TextTrimming="CharacterEllipsis" Margin="0,1"/>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
         </StackPanel>
       </Border>
 
@@ -454,6 +478,14 @@ $Xaml = @'
         </StackPanel>
         <TextBlock x:Name="Footer" Style="{StaticResource Hint}" FontSize="11.5" TextTrimming="CharacterEllipsis" Text="Checking yt-dlp..."/>
       </DockPanel>
+
+      <!-- Credits -->
+      <TextBlock Margin="0,10,0,0" Style="{StaticResource Hint}" FontSize="11.5" HorizontalAlignment="Center" TextWrapping="Wrap">
+        Built on <Hyperlink NavigateUri="https://github.com/yt-dlp/yt-dlp" Foreground="{{Link}}" ToolTip="https://github.com/yt-dlp/yt-dlp">yt-dlp</Hyperlink>
+        (a fork of <Hyperlink NavigateUri="https://github.com/ytdl-org/youtube-dl" Foreground="{{Link}}" ToolTip="https://github.com/ytdl-org/youtube-dl">youtube-dl</Hyperlink>)
+        ·  audio by <Hyperlink NavigateUri="https://ffmpeg.org" Foreground="{{Link}}" ToolTip="https://ffmpeg.org">FFmpeg</Hyperlink>
+        ·  <Hyperlink NavigateUri="https://deno.com" Foreground="{{Link}}" ToolTip="https://deno.com">Deno</Hyperlink>
+      </TextBlock>
     </StackPanel>
   </Border>
 </Window>
@@ -465,8 +497,9 @@ $window.TaskbarItemInfo = New-Object System.Windows.Shell.TaskbarItemInfo
 
 $ui = @{}
 foreach ($name in 'PasteBtn', 'Links', 'LinksHint', 'FormatPanel', 'QualityLabel', 'QualityPanel', 'BrowseBtn', 'OutDir',
-                  'EmbedChk', 'PlaylistChk', 'ClipStart', 'ClipEnd', 'OpenBtn', 'CancelBtn', 'GoBtn', 'Counter',
-                  'NowTitle', 'Bar', 'Status', 'Log', 'LogBtn', 'ShortcutBtn', 'UpdateBtn', 'Footer') {
+                  'EmbedChk', 'PlaylistChk', 'ClipStart', 'ClipEnd', 'WatchChk', 'OpenBtn', 'CancelBtn', 'GoBtn', 'Counter',
+                  'NowTitle', 'Bar', 'Status', 'QueuePanel', 'QueueCaption', 'QueueList', 'Log', 'LogBtn',
+                  'ShortcutBtn', 'UpdateBtn', 'Footer') {
     $ui[$name] = $window.FindName($name)
 }
 
@@ -478,7 +511,8 @@ $S = @{
     Proc      = $null
     OutTask   = $null
     ErrTask   = $null
-    Urls      = @()
+    Jobs      = New-Object 'System.Collections.Generic.List[hashtable]'   # the queue: one entry per link, with its own settings
+    Job       = $null   # the entry being downloaded
     Index     = 0
     Files     = New-Object System.Collections.Generic.List[string]
     Errors    = New-Object System.Collections.Generic.List[string]
@@ -496,6 +530,8 @@ $S = @{
     RecheckVersion = $false
     SavedOutDir = $SavedOutDir   # usual folder that was unavailable at startup
     LastFolderCheck = [DateTime]::MinValue
+    ClipSeq   = [uint32]0   # Windows' clipboard change counter, as last seen
+    ClipTries = 0
 }
 
 $FormatLabels = @{ mp3 = 'MP3'; m4a = 'M4A'; opus = 'Opus'; flac = 'FLAC'; wav = 'WAV' }
@@ -505,6 +541,21 @@ $Inv = [Globalization.CultureInfo]::InvariantCulture
 
 $timer = New-Object System.Windows.Threading.DispatcherTimer
 $timer.Interval = [TimeSpan]::FromMilliseconds(80)
+
+$clipTimer = New-Object System.Windows.Threading.DispatcherTimer   # watches the clipboard for copied links
+$clipTimer.Interval = [TimeSpan]::FromMilliseconds(400)
+
+# Win32 calls: themed title bar, and the clipboard change counter (cheap to poll; doesn't open the clipboard).
+$HasNative = $false
+try {
+    Add-Type -Namespace AudioExtractorNative -Name Win32 -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+public static extern int DwmSetWindowAttribute(System.IntPtr hwnd, int attr, ref int value, int size);
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+public static extern uint GetClipboardSequenceNumber();
+'@
+    $HasNative = $true
+} catch { }
 
 # ============================================================================ small UI helpers
 
@@ -542,14 +593,14 @@ function Set-Checked($Panel, [string]$Tag) {
 
 function Update-FormatUi {
     $fmt = Get-Checked $ui.FormatPanel
-    $ui.QualityPanel.IsEnabled = ($fmt -eq 'mp3') -and -not $S.Running
+    $ui.QualityPanel.IsEnabled = ($fmt -eq 'mp3')
     $ui.QualityLabel.Opacity = $(if ($fmt -eq 'mp3') { 1 } else { 0.45 })
     $ui.EmbedChk.Content = $(if ($fmt -eq 'wav') { 'Add tags (WAV has no cover art)' } else { 'Add cover art & tags' })
 }
 
 function Update-Counter {
     $parts = @()
-    if ($S.Urls.Count -gt 1) { $parts += "Link $($S.Index + 1) of $($S.Urls.Count)" }
+    if ($S.Jobs.Count -gt 1) { $parts += "Link $($S.Index + 1) of $($S.Jobs.Count)" }
     if ($S.PlIndex -match '^\d+$' -and $S.PlCount -match '^\d+$') { $parts += "Track $($S.PlIndex) of $($S.PlCount)" }
     $ui.Counter.Text = $parts -join '  ·  '
 }
@@ -564,18 +615,54 @@ function Set-Progress([double]$Pct) {
     }
     $tb = $window.TaskbarItemInfo
     $tb.ProgressState = 'Normal'
-    $tb.ProgressValue = [Math]::Min(1, ($S.Index + $within) / [Math]::Max(1, $S.Urls.Count))
+    $tb.ProgressValue = [Math]::Min(1, ($S.Index + $within) / [Math]::Max(1, $S.Jobs.Count))
 }
 
 function Set-Busy([bool]$Busy) {
-    foreach ($n in 'Links', 'PasteBtn', 'FormatPanel', 'OutDir', 'BrowseBtn', 'EmbedChk', 'PlaylistChk',
-                   'ClipStart', 'ClipEnd', 'UpdateBtn', 'ShortcutBtn') {
-        $ui[$n].IsEnabled = -not $Busy
-    }
-    $ui.GoBtn.Visibility     = $(if ($Busy) { 'Collapsed' } else { 'Visible' })
+    # Settings stay editable while downloading: each queued link keeps the settings it was added with,
+    # so changes only apply to links added afterwards.
+    foreach ($n in 'UpdateBtn', 'ShortcutBtn') { $ui[$n].IsEnabled = -not $Busy }
+    $ui.GoBtn.Content        = $(if ($Busy) { 'Add to queue' } else { 'Extract audio' })
     $ui.CancelBtn.Visibility = $(if ($Busy) { 'Visible' } else { 'Collapsed' })
     $ui.CancelBtn.IsEnabled  = $Busy
     Update-FormatUi
+    Update-QueueView
+}
+
+function Get-JobLabel($Job) {
+    # Short description of a queued link's settings, e.g. "MP3 320 kbps  ·  clip 0:45-2:10".
+    $t = $FormatLabels[$Job.Format]
+    if ($Job.Format -eq 'mp3') { $t += ' ' + $(if ($Job.Quality -eq '0') { 'best' } else { $Job.Quality -replace 'K$', ' kbps' }) }
+    if ($Job.ClipStart -or $Job.ClipEnd) {
+        $t += '  ·  clip {0}-{1}' -f $(if ($Job.ClipStart) { $Job.ClipStart } else { '0:00' }), $(if ($Job.ClipEnd) { $Job.ClipEnd } else { 'end' })
+    }
+    if ($Job.Playlist) { $t += '  ·  playlist' }
+    return $t
+}
+
+function Update-QueueView {
+    # Lists the links waiting after the current one.
+    $waiting = @(if ($S.Running) { for ($i = $S.Index + 1; $i -lt $S.Jobs.Count; $i++) { $S.Jobs[$i] } })
+    if (-not $waiting.Count) {
+        $ui.QueuePanel.Visibility = 'Collapsed'
+        $ui.QueueList.ItemsSource = $null
+        return
+    }
+    $max = 4
+    $lines = @(foreach ($j in ($waiting | Select-Object -First $max)) {
+        '{0}     {1}' -f (Get-JobLabel $j), ($j.Url -replace '^https?://(www\.)?', '')
+    })
+    if ($waiting.Count -gt $max) { $lines += '...and {0} more' -f ($waiting.Count - $max) }
+    $ui.QueueCaption.Text = "UP NEXT ($($waiting.Count))"
+    $ui.QueueList.ItemsSource = [string[]]$lines
+    $ui.QueuePanel.Visibility = 'Visible'
+}
+
+function Get-IdleTip {
+    if ($ui.WatchChk.IsChecked -and $ui.WatchChk.IsEnabled) {
+        return 'Tip: copy a YouTube link anywhere (Ctrl+C) and it gets added to the queue with the settings above.'
+    }
+    return 'Tip: copy a YouTube link, then switch to this window - it gets pasted for you.'
 }
 
 function Save-Settings {
@@ -586,6 +673,7 @@ function Save-Settings {
             # Don't forget the usual folder just because it was unavailable this time.
             OutDir  = $(if ($S.SavedOutDir -and $ui.OutDir.Text.Trim() -eq $DefaultOutDir) { $S.SavedOutDir } else { $ui.OutDir.Text.Trim() })
             Embed   = [bool]$ui.EmbedChk.IsChecked
+            WatchClipboard = [bool]$ui.WatchChk.IsChecked
         }
         $o | ConvertTo-Json | Set-Content -LiteralPath $SettingsPath -Encoding UTF8
     } catch { }
@@ -634,50 +722,125 @@ function Join-Args($List) {
     return ($quoted -join ' ')
 }
 
-function Get-YtArgs([string]$Url) {
+function Get-YtArgs($Job) {
     $a = New-Object System.Collections.Generic.List[string]
     $a.AddRange([string[]]@('--ignore-config', '--encoding', 'utf-8', '--color', 'never', '--newline',
                             '--no-quiet', '--no-mtime', '-x'))
-    $a.Add($(if ($S.Playlist) { '--yes-playlist' } else { '--no-playlist' }))
+    $a.Add($(if ($Job.Playlist) { '--yes-playlist' } else { '--no-playlist' }))
     if ($JsRuntime -and $JsRuntime -ne 'deno') { $a.AddRange([string[]]@('--js-runtimes', $JsRuntime)) }
 
-    switch ($S.Format) {
-        'mp3'  { $a.AddRange([string[]]@('--audio-format', 'mp3', '--audio-quality', $S.Quality)) }
+    switch ($Job.Format) {
+        'mp3'  { $a.AddRange([string[]]@('--audio-format', 'mp3', '--audio-quality', $Job.Quality)) }
         'm4a'  { $a.AddRange([string[]]@('-f', 'ba[ext=m4a]/ba/b', '--audio-format', 'm4a')) }
         'opus' { $a.AddRange([string[]]@('--audio-format', 'opus')) }
         'flac' { $a.AddRange([string[]]@('--audio-format', 'flac')) }
         'wav'  { $a.AddRange([string[]]@('--audio-format', 'wav')) }
     }
-    if ($S.Embed) {
+    if ($Job.Embed) {
         $a.Add('--embed-metadata')
-        if ($S.Format -ne 'wav') { $a.Add('--embed-thumbnail') }
+        if ($Job.Format -ne 'wav') { $a.Add('--embed-thumbnail') }
     }
 
     $suffix = ''
-    if ($S.ClipStart -or $S.ClipEnd) {
-        $from = $(if ($S.ClipStart) { $S.ClipStart } else { '0' })
-        $to   = $(if ($S.ClipEnd) { $S.ClipEnd } else { 'inf' })
+    if ($Job.ClipStart -or $Job.ClipEnd) {
+        $from = $(if ($Job.ClipStart) { $Job.ClipStart } else { '0' })
+        $to   = $(if ($Job.ClipEnd) { $Job.ClipEnd } else { 'inf' })
         # --force-keyframes-at-cuts makes the cut exact; without it WebM/Opus sources ignore the start time.
         $a.AddRange([string[]]@('--download-sections', "*$from-$to", '--force-keyframes-at-cuts'))
-        $suffix = ' (clip {0}-{1})' -f $from.Replace(':', '.'), $(if ($S.ClipEnd) { $S.ClipEnd.Replace(':', '.') } else { 'end' })
+        $suffix = ' (clip {0}-{1})' -f $from.Replace(':', '.'), $(if ($Job.ClipEnd) { $Job.ClipEnd.Replace(':', '.') } else { 'end' })
     }
 
     $a.AddRange([string[]]@(
-        '-P', $S.OutDir,
+        '-P', $Job.OutDir,
         '-o', "%(playlist_index&{} - |)s%(title)s$suffix.%(ext)s",
         '--print', 'before_dl:ITEM|%(playlist_index|)s|%(n_entries|)s|%(title)s',
         '--print', 'after_move:FILE|%(filepath)s',
         '--progress-template', 'download:PROG|%(progress._percent)s|%(progress._speed_str)s|%(progress._eta_str)s',
         '--progress-template', 'postprocess:PP|%(progress.status)s|%(progress.postprocessor)s',
-        '--', $Url))
+        '--', $Job.Url))
     return , $a
 }
 
 # ============================================================================ running yt-dlp
 
-function Start-Run {
-    if ($S.Running) { return }
+function Get-JobOptions {
+    # The current settings, applied to links added now. Returns @{ Error = '...' } if something needs fixing first.
+    if (-not $Ffmpeg) {
+        return @{ Error = "ffmpeg isn't installed, so the audio can't be converted.`n`nInstall it from a terminal with:`nwinget install yt-dlp.FFmpeg" }
+    }
 
+    $start = $ui.ClipStart.Text.Trim()
+    $end   = $ui.ClipEnd.Text.Trim()
+    foreach ($t in @($start, $end)) {
+        if ($t -and $t -notmatch $TimeRx) { return @{ Error = "Clip times look like 1:30, 0:45 or 1:02:03 (got `"$t`")." } }
+    }
+    if ($start -and $end -and (ConvertTo-Seconds $end) -le (ConvertTo-Seconds $start)) {
+        return @{ Error = 'The clip has to end after it starts.' }
+    }
+
+    $dir = [Environment]::ExpandEnvironmentVariables($ui.OutDir.Text.Trim())
+    if (-not $dir) { return @{ Error = 'Choose a folder to save into.' } }
+    try {
+        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        $dir = (Resolve-Path -LiteralPath $dir).ProviderPath
+    } catch {
+        return @{ Error = "Can't use that folder:`n$($_.Exception.Message)" }
+    }
+
+    return @{
+        Format    = Get-Checked $ui.FormatPanel
+        Quality   = Get-Checked $ui.QualityPanel
+        Embed     = [bool]$ui.EmbedChk.IsChecked
+        Playlist  = [bool]$ui.PlaylistChk.IsChecked
+        ClipStart = $start
+        ClipEnd   = $end
+        OutDir    = $dir
+    }
+}
+
+function Get-JobKey($Job) {
+    return ($Job.Url, $Job.Format, $Job.Quality, $Job.Embed, $Job.Playlist, $Job.ClipStart, $Job.ClipEnd, $Job.OutDir) -join '|'
+}
+
+function Add-LinksToBox($List) {
+    # Puts links back into the Links box (after whatever is there), e.g. ones that failed.
+    $lines = @($ui.Links.Text -split '\r?\n' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) + @($List)
+    $ui.Links.Text = (@($lines) | Select-Object -Unique) -join "`r`n"
+}
+
+function Add-Jobs($Urls, $Opts) {
+    # Adds links to the queue with the given settings, and starts downloading if nothing is running.
+    if (-not $S.Running) {
+        $S.Jobs.Clear()
+        $S.Index = 0
+        $S.Files.Clear(); $S.Errors.Clear(); $S.Failed.Clear()
+        $S.Cancelled = $false
+        $S.LastFile = $null
+        $ui.Log.Clear(); $S.LogChars = 0
+    }
+    foreach ($u in $Urls) {
+        $job = $Opts.Clone()
+        $job.Url = $u
+        $S.Jobs.Add($job)
+        [void]$S.Seen.Add($u)
+        if ($S.Running) { Write-Log "+ Added to queue: $u  [$(Get-JobLabel $job)]" }
+    }
+    Save-Settings
+
+    if ($S.Running) {
+        Update-Counter
+        Update-QueueView
+        return
+    }
+    $S.Running = $true
+    Set-Busy $true
+    $ui.Status.ToolTip = $null
+    Start-Item
+    $timer.Start()
+}
+
+function Start-Run {
+    # "Extract audio" / "Add to queue": queues the links in the box with the current settings.
     $links = Get-Links
     if ($links.Bad.Count) {
         Show-Message ("These don't look like links:`n`n" + ($links.Bad -join "`n")) 'Warning'
@@ -688,60 +851,44 @@ function Start-Run {
         [void]$ui.Links.Focus()
         return
     }
-    if (-not $Ffmpeg) {
-        Show-Message "ffmpeg isn't installed, so the audio can't be converted.`n`nInstall it from a terminal with:`nwinget install yt-dlp.FFmpeg" 'Warning'
+    $opts = Get-JobOptions
+    if ($opts.Error) {
+        Show-Message $opts.Error 'Warning'
         return
     }
+    $ui.Links.Clear()
+    Add-Jobs $links.Ok $opts
+}
 
-    $start = $ui.ClipStart.Text.Trim()
-    $end   = $ui.ClipEnd.Text.Trim()
-    foreach ($t in @($start, $end)) {
-        if ($t -and $t -notmatch $TimeRx) {
-            Show-Message "Clip times look like 1:30, 0:45 or 1:02:03 (got `"$t`")." 'Warning'
-            return
-        }
-    }
-    if ($start -and $end -and (ConvertTo-Seconds $end) -le (ConvertTo-Seconds $start)) {
-        Show-Message 'The clip has to end after it starts.' 'Warning'
+function Add-CopiedLink([string]$Text) {
+    # Called when the clipboard changes while "Queue YouTube links I copy" is on.
+    $t = "$Text".Trim()
+    if (-not $t -or $t -notmatch $YtUrlRx) { return }
+    $url = $(if ($t -match '^https?://') { $t } else { "https://$t" })
+    $S.LastAuto = $t   # don't paste it into the Links box as well when the window is activated
+
+    $opts = Get-JobOptions
+    if ($opts.Error) {
+        # Keep the link so it isn't lost; the message explains what to fix.
+        Add-LinksToBox @($url)
+        $msg = $opts.Error -replace '\s*\r?\n\s*', ' '
+        Set-Status "Copied link not queued (it's in the Links box): $msg"
+        Write-Log "x Copied link not queued: $url - $msg"
         return
     }
-
-    $dir = [Environment]::ExpandEnvironmentVariables($ui.OutDir.Text.Trim())
-    if (-not $dir) { Show-Message 'Choose a folder to save into.' 'Warning'; return }
-    try {
-        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-        $dir = (Resolve-Path -LiteralPath $dir).ProviderPath
-    } catch {
-        Show-Message "Can't use that folder:`n$($_.Exception.Message)" 'Warning'
-        return
+    $job = $opts.Clone()
+    $job.Url = $url
+    if ($S.Running) {
+        # Ignore a repeat of a link that's already waiting with the same settings.
+        $key = Get-JobKey $job
+        for ($i = $S.Index; $i -lt $S.Jobs.Count; $i++) { if ((Get-JobKey $S.Jobs[$i]) -eq $key) { return } }
     }
-
-    $S.Urls = @($links.Ok)
-    $S.Index = 0
-    $S.Files.Clear(); $S.Errors.Clear(); $S.Failed.Clear()
-    $S.Cancelled = $false
-    $S.LastFile = $null
-    $S.Format = Get-Checked $ui.FormatPanel
-    $S.Quality = Get-Checked $ui.QualityPanel
-    $S.Embed = [bool]$ui.EmbedChk.IsChecked
-    $S.Playlist = [bool]$ui.PlaylistChk.IsChecked
-    $S.ClipStart = $start
-    $S.ClipEnd = $end
-    $S.OutDir = $dir
-    foreach ($u in $S.Urls) { [void]$S.Seen.Add($u) }
-    Save-Settings
-
-    $S.Running = $true
-    Set-Busy $true
-    $ui.Status.ToolTip = $null
-    $ui.Log.Clear(); $S.LogChars = 0
-    Write-Log "Saving $($FormatLabels[$S.Format]) files to $dir"
-    Start-Item
-    $timer.Start()
+    Add-Jobs @($url) $opts
 }
 
 function Start-Item {
-    $url = $S.Urls[$S.Index]
+    $S.Job = $S.Jobs[$S.Index]
+    $url = $S.Job.Url
     $S.ItemErrors = 0
     $S.PlIndex = ''; $S.PlCount = ''
     $S.Temp.Clear()
@@ -749,19 +896,21 @@ function Start-Item {
     $ui.Bar.IsIndeterminate = $true
     Set-Status $url
     Update-Counter
+    Update-QueueView
     Write-Log ''
     Write-Log "-> $url"
+    Write-Log "   $(Get-JobLabel $S.Job)  ->  $($S.Job.OutDir)"
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $YtDlp
-    $psi.Arguments = Join-Args (Get-YtArgs $url)
+    $psi.Arguments = Join-Args (Get-YtArgs $S.Job)
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow = $true
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $psi.StandardOutputEncoding = New-Object System.Text.UTF8Encoding $false
     $psi.StandardErrorEncoding = New-Object System.Text.UTF8Encoding $false
-    $psi.WorkingDirectory = $S.OutDir
+    $psi.WorkingDirectory = $S.Job.OutDir
     $psi.EnvironmentVariables['PYTHONUTF8'] = '1'
 
     try {
@@ -823,7 +972,7 @@ function Receive-Line([string]$Line) {
         $f = $Line.Split('|')
         if ($f[1] -eq 'started') {
             $msg = switch ($f[2]) {
-                'ExtractAudio'   { "Converting to $($FormatLabels[$S.Format])..." }
+                'ExtractAudio'   { "Converting to $($FormatLabels[$S.Job.Format])..." }
                 'Metadata'       { 'Writing tags...' }
                 'EmbedThumbnail' { 'Adding cover art...' }
                 'MoveFiles'      { 'Finishing up...' }
@@ -891,7 +1040,7 @@ function Complete-Item {
         return
     }
     if ($code -ne 0 -or $S.ItemErrors -gt 0) {
-        $S.Failed.Add($S.Urls[$S.Index])
+        $S.Failed.Add($S.Job.Url)
         if ($S.ItemErrors -eq 0) {
             $S.Errors.Add("yt-dlp stopped with exit code $code")
             Write-Log "x yt-dlp stopped with exit code $code"
@@ -902,7 +1051,7 @@ function Complete-Item {
 
 function Move-Next {
     $S.Index++
-    if ($S.Index -lt $S.Urls.Count) { Start-Item } else { Finish-Run }
+    if ($S.Index -lt $S.Jobs.Count) { Start-Item } else { Finish-Run }
 }
 
 function Finish-Run {
@@ -915,6 +1064,9 @@ function Finish-Run {
     $files = $(if ($n -eq 1) { '1 file' } else { "$n files" })
 
     if ($S.Cancelled) {
+        # The queue is emptied; put the links that didn't finish back in the box.
+        $left = @(for ($i = $S.Index; $i -lt $S.Jobs.Count; $i++) { $S.Jobs[$i].Url })
+        Add-LinksToBox (@($S.Failed) + $left)
         $ui.NowTitle.Text = 'Cancelled'
         Set-Status "Stopped. $files saved before cancelling."
         $ui.Bar.Value = 0
@@ -923,12 +1075,13 @@ function Finish-Run {
         return
     }
 
-    # Keep only the links that failed in the box, so they're easy to retry.
-    $ui.Links.Text = (@($S.Failed) | Select-Object -Unique) -join "`r`n"
+    # Put the links that failed back in the box, so they're easy to retry.
+    if ($S.Failed.Count) { Add-LinksToBox $S.Failed }
 
     if ($S.Errors.Count -eq 0) {
         $ui.NowTitle.Text = "Done - $files saved"
-        Set-Status "Saved to $($S.OutDir)"
+        $dir = $(if ($S.LastFile) { [IO.Path]::GetDirectoryName($S.LastFile) } else { $S.Job.OutDir })
+        Set-Status "Saved to $dir"
         $ui.Bar.Value = 100
         $tb.ProgressState = 'None'
         [System.Media.SystemSounds]::Asterisk.Play()
@@ -1072,21 +1225,16 @@ function Install-Shortcuts {
 
 function Set-TitleBarColors {
     # Matches the Windows title bar to the app's theme (Windows 11; ignored elsewhere).
+    if (-not $HasNative) { return }
     try {
-        if (-not ('AudioExtractorNative.Dwm' -as [type])) {
-            Add-Type -Namespace AudioExtractorNative -Name Dwm -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("dwmapi.dll")]
-public static extern int DwmSetWindowAttribute(System.IntPtr hwnd, int attr, ref int value, int size);
-'@
-        }
         $h = (New-Object System.Windows.Interop.WindowInteropHelper $window).Handle
         $toRef = { param($hex) $c = [Convert]::ToInt32($hex.Substring(1), 16); (($c -shr 16) -band 0xFF) -bor ($c -band 0xFF00) -bor (($c -band 0xFF) -shl 16) }
         $dark = [int]($Theme -eq 'dark')
         $caption = & $toRef $P.Bg
         $text = & $toRef $P.Text
-        [void][AudioExtractorNative.Dwm]::DwmSetWindowAttribute($h, 20, [ref]$dark, 4)
-        [void][AudioExtractorNative.Dwm]::DwmSetWindowAttribute($h, 35, [ref]$caption, 4)
-        [void][AudioExtractorNative.Dwm]::DwmSetWindowAttribute($h, 36, [ref]$text, 4)
+        [void][AudioExtractorNative.Win32]::DwmSetWindowAttribute($h, 20, [ref]$dark, 4)
+        [void][AudioExtractorNative.Win32]::DwmSetWindowAttribute($h, 35, [ref]$caption, 4)
+        [void][AudioExtractorNative.Win32]::DwmSetWindowAttribute($h, 36, [ref]$text, 4)
     } catch { }
 }
 
@@ -1111,6 +1259,43 @@ $timer.Add_Tick({
 })
 
 foreach ($chip in $ui.FormatPanel.Children) { $chip.Add_Checked({ Update-FormatUi }) }
+
+function Test-ClipboardChange([bool]$CopiedElsewhere) {
+    # Checks Windows' clipboard change counter; when it moved, passes the new text to Add-CopiedLink.
+    $seq = [AudioExtractorNative.Win32]::GetClipboardSequenceNumber()
+    if ($seq -eq $S.ClipSeq) { return }
+    $t = $null
+    try { $t = [System.Windows.Clipboard]::GetText() } catch { }   # fails while another app holds the clipboard
+    if ($null -eq $t) {
+        $S.ClipTries++
+        if ($S.ClipTries -le 5) { return }   # try again on the next tick
+    }
+    $S.ClipSeq = $seq
+    $S.ClipTries = 0
+    # Text copied inside this window (e.g. from the Links box) is left alone.
+    if ($CopiedElsewhere -or -not $window.IsActive) { Add-CopiedLink $t }
+}
+
+$clipTimer.Add_Tick({
+    try { Test-ClipboardChange $false } catch { Write-Log "Clipboard: $($_.Exception.Message)" }
+})
+
+function Update-ClipWatch {
+    $on = [bool]$ui.WatchChk.IsChecked -and $HasNative
+    if ($on -and -not $clipTimer.IsEnabled) {
+        # Only links copied from now on count; what's already on the clipboard is left alone.
+        $S.ClipSeq = [AudioExtractorNative.Win32]::GetClipboardSequenceNumber()
+        $S.ClipTries = 0
+        $clipTimer.Start()
+    } elseif (-not $on) {
+        $clipTimer.Stop()
+    }
+    if (-not $S.Running) { Set-Status (Get-IdleTip) }
+}
+
+$ui.WatchChk.Add_Click({
+    try { Update-ClipWatch; Save-Settings } catch { }
+})
 
 $ui.Links.Add_TextChanged({
     $ui.LinksHint.Visibility = $(if ($ui.Links.Text.Length) { 'Collapsed' } else { 'Visible' })
@@ -1158,7 +1343,7 @@ $ui.OpenBtn.Add_Click({
 })
 
 $ui.GoBtn.Add_Click({
-    try { Start-Run } catch { Show-Message "Something went wrong: $($_.Exception.Message)" 'Error'; if ($S.Running) { Finish-Run } }
+    try { Start-Run } catch { Show-Message "Something went wrong: $($_.Exception.Message)" 'Error'; if ($S.Running -and -not $S.Proc) { Finish-Run } }
 })
 
 $ui.CancelBtn.Add_Click({ Stop-Run })
@@ -1203,18 +1388,28 @@ $window.Add_Activated({
                 Set-Status "Your usual folder is available again: $($ui.OutDir.Text)"
             }
         }
+        # A link copied just before switching here may not have been picked up by the clipboard timer yet.
+        if ($clipTimer.IsEnabled) { Test-ClipboardChange $true }
         # Copied a YouTube link? Fill it in when the window comes back into focus.
-        if ($S.Running -or $ui.Links.Text.Trim()) { return }
+        if ($ui.Links.Text.Trim()) { return }
         $t = [System.Windows.Clipboard]::GetText().Trim()
         if ($t -and $t -match $YtUrlRx -and $t -ne $S.LastAuto -and -not $S.Seen.Contains($t)) {
             $ui.Links.Text = $t
             $S.LastAuto = $t
-            Set-Status 'Pasted the link from your clipboard. Press Extract audio when ready.'
+            if (-not $S.Running) { Set-Status 'Pasted the link from your clipboard. Press Extract audio when ready.' }
         }
     } catch { }
 })
 
 $window.Add_SourceInitialized({ Set-TitleBarColors })
+
+# Credits line: open its links in the default browser.
+$window.AddHandler([System.Windows.Documents.Hyperlink]::RequestNavigateEvent,
+    [System.Windows.Navigation.RequestNavigateEventHandler]{
+        param($sender, $e)
+        try { Start-Process $e.Uri.AbsoluteUri } catch { }
+        $e.Handled = $true
+    })
 
 $window.Add_Loaded({
     Start-VersionCheck
@@ -1237,6 +1432,7 @@ $window.Add_Closing({
         Stop-Run -Wait
     }
     $timer.Stop()
+    $clipTimer.Stop()
     Save-Settings
 })
 
@@ -1247,7 +1443,13 @@ Set-Checked $ui.FormatPanel $Settings.Format
 Set-Checked $ui.QualityPanel ([string]$Settings.Quality)
 $ui.OutDir.Text = $Settings.OutDir
 $ui.EmbedChk.IsChecked = [bool]$Settings.Embed
+$ui.WatchChk.IsChecked = [bool]$Settings.WatchClipboard
+if (-not $HasNative) {
+    $ui.WatchChk.IsEnabled = $false
+    $ui.WatchChk.ToolTip = "Not available: PowerShell couldn't load the Windows clipboard functions on this PC."
+}
 Update-FormatUi
+Update-ClipWatch
 try { $window.Icon = New-AppIcon 64 } catch { }
 
 [void]$window.ShowDialog()
