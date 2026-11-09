@@ -1,0 +1,19 @@
+name: Build release file
+on:
+  release:
+    types: [published]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt pyinstaller
+      - run: pyinstaller --onefile --name audio-extractor app.py
+      - run: gh release upload ${{ github.event.release.tag_name }} dist/audio-extractor.exe --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
